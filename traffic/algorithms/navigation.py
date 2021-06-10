@@ -1,5 +1,4 @@
 # fmt: off
-
 import warnings
 from operator import attrgetter
 from typing import (
@@ -8,6 +7,7 @@ from typing import (
 
 import numpy as np
 import pandas as pd
+import torch
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
 
 from ..core.geodesy import destination, mrr_diagonal
@@ -775,8 +775,43 @@ class NavigationFeatures:
             return -1
         return len(simplified.shape.buffer(1e-3).interiors)
 
+
+@flight_iterator
+def holding_pattern(
+    self,
+    embedding_model,
+    clustering_model,
+    scaler,
+    duration: str,
+    step: str,
+    threshold: str,
+    samples: int,
+    chp: int,
+) -> Iterator["Flight"]:
+    flight_ids, cumul, windows = [], [], []
+    for i, window in enumerate(self.sliding_windows(duration, step)):
+        if window.duration >= pd.Timedelta(threshold):
+            windows.append(window)
+            window = window.assign(flight_id=window.flight_id + "_" + str(i))
+            resampled = window.resample(samples)
+            if resampled.data.eval("track != track").any():
+                continue
+            cumul.append(
+                resampled.data.track_unwrapped
+                - resampled.data.track_unwrapped[0]
+            )
+            flight_ids.append(window.flight_id)
+    df = pd.DataFrame(dict(flight_id=flight_ids, data=cumul))
+    x = scaler.transform(np.stack(df.data.values))
+    embeddings = embedding_model(torch.Tensor(x)).detach().cpu().numpy()
+    c = clustering_model.predict(embeddings)
+    print(c)
+    for i, window in enumerate(windows):
+        if c[i] == chp:
+            yield window
+
     @flight_iterator
-    def holding_pattern(
+    def holding_pattern_back(
         self,
         min_altitude=7000,
         turning_threshold=0.5,

@@ -81,6 +81,7 @@ setup(
         "beautifulsoup4",
         "lxml",
         "metar",
+        "torch",
     ],
     extras_require={
         "dev": [

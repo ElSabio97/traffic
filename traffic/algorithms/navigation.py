@@ -775,40 +775,38 @@ class NavigationFeatures:
             return -1
         return len(simplified.shape.buffer(1e-3).interiors)
 
-
-@flight_iterator
-def holding_pattern(
-    self,
-    embedding_model,
-    clustering_model,
-    scaler,
-    duration: str,
-    step: str,
-    threshold: str,
-    samples: int,
-    chp: int,
-) -> Iterator["Flight"]:
-    flight_ids, cumul, windows = [], [], []
-    for i, window in enumerate(self.sliding_windows(duration, step)):
-        if window.duration >= pd.Timedelta(threshold):
-            windows.append(window)
-            window = window.assign(flight_id=window.flight_id + "_" + str(i))
-            resampled = window.resample(samples)
-            if resampled.data.eval("track != track").any():
-                continue
-            cumul.append(
-                resampled.data.track_unwrapped
-                - resampled.data.track_unwrapped[0]
-            )
-            flight_ids.append(window.flight_id)
-    df = pd.DataFrame(dict(flight_id=flight_ids, data=cumul))
-    x = scaler.transform(np.stack(df.data.values))
-    embeddings = embedding_model(torch.Tensor(x)).detach().cpu().numpy()
-    c = clustering_model.predict(embeddings)
-    print(c)
-    for i, window in enumerate(windows):
-        if c[i] == chp:
-            yield window
+    @flight_iterator
+    def holding_pattern(
+        self,
+        embedding_model,
+        clustering_model,
+        scaler,
+        duration: str,
+        step: str,
+        threshold: str,
+        samples: int,
+        chp: List[int],
+    ) -> Iterator["Flight"]:
+        self = cast("Flight", self)
+        for i, window in enumerate(self.sliding_windows(duration, step)):
+            if window.duration >= pd.Timedelta(threshold):
+                window = window.assign(
+                    flight_id=window.flight_id + "_" + str(i)
+                )
+                resampled = window.resample(samples)
+                if resampled.data.eval("track != track").any():
+                    continue
+                track = (
+                    resampled.data.track_unwrapped
+                    - resampled.data.track_unwrapped[0]
+                )
+                x = scaler.transform(track.values.reshape(1, -1))
+                embedding_model.to("cpu")
+                embedding_model.eval()
+                with torch.no_grad():
+                    embeddings = embedding_model(torch.Tensor(x))
+                if clustering_model.predict(embeddings) in chp:
+                    yield window
 
     @flight_iterator
     def holding_pattern_back(

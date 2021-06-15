@@ -1,14 +1,19 @@
 # fmt: off
 import warnings
+from io import BytesIO
 from operator import attrgetter
+from pkgutil import get_data
 from typing import (
-    TYPE_CHECKING, Iterable, Iterator, List, Optional, Sequence, Union, cast
+    TYPE_CHECKING, Callable, Iterable, Iterator,
+    List, Optional, Sequence, Union, cast
 )
 
 import numpy as np
+import onnxruntime as rt
 import pandas as pd
 import torch
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
+from typing_extensions import Protocol
 
 from ..core.geodesy import destination, mrr_diagonal
 from ..core.iterator import flight_iterator
@@ -775,19 +780,37 @@ class NavigationFeatures:
             return -1
         return len(simplified.shape.buffer(1e-3).interiors)
 
+    class TransformerProtocol(Protocol):
+        def transform(self, X: np.ndarray) -> np.ndarray:
+            ...
+
+    class ClusteringProtocol(Protocol):
+        def predict(self, X: np.ndarray) -> np.ndarray:
+            ...
+
     @flight_iterator
     def holding_pattern(
         self,
-        embedding_model,
-        clustering_model,
-        scaler,
-        duration: str,
-        step: str,
-        threshold: str,
-        samples: int,
-        chp: List[int],
+        # embedding_model: Optional[Callable] = None,
+        embedding_model=None,
+        clustering_model: Optional[ClusteringProtocol] = None,
+        scaler: Optional[TransformerProtocol] = None,
+        duration: str = "6T",
+        step: str = "2T",
+        threshold: str = "5T",
+        samples: int = 30,
+        chp: List[int] = [2],
     ) -> Iterator["Flight"]:
         self = cast("Flight", self)
+        if scaler is None:
+            data = get_data("traffic.algorithms.onnx", "scaler.onnx")
+            scaler_sess = rt.InferenceSession(data)
+        if embedding_model is None:
+            data = get_data("traffic.algorithms.onnx", "embedding_model.onnx")
+            embedding_sess = rt.InferenceSession(data)
+        if clustering_model is None:
+            data = get_data("traffic.algorithms.onnx", "clustering_model.onnx")
+            clustering_sess = rt.InferenceSession(data)
         for i, window in enumerate(self.sliding_windows(duration, step)):
             if window.duration >= pd.Timedelta(threshold):
                 window = window.assign(
@@ -796,16 +819,50 @@ class NavigationFeatures:
                 resampled = window.resample(samples)
                 if resampled.data.eval("track != track").any():
                     continue
-                track = (
+                tracks = (
                     resampled.data.track_unwrapped
                     - resampled.data.track_unwrapped[0]
+                ).values.reshape(1, -1)
+                x = (
+                    scaler_sess.run(
+                        None,
+                        {
+                            scaler_sess.get_inputs()[0].name: tracks.astype(
+                                np.float32
+                            )
+                        },
+                    )[0]
+                    if scaler is None
+                    else scaler.transform(tracks)
                 )
-                x = scaler.transform(track.values.reshape(1, -1))
-                embedding_model.to("cpu")
-                embedding_model.eval()
-                with torch.no_grad():
-                    embeddings = embedding_model(torch.Tensor(x))
-                if clustering_model.predict(embeddings) in chp:
+                embeddings = None
+                if embedding_model is not None:
+                    embedding_model.to("cpu")
+                    embedding_model.eval()
+                    with torch.no_grad():
+                        embeddings = embedding_model(torch.Tensor(x))
+                else:
+                    embeddings = embedding_sess.run(
+                        None,
+                        {
+                            embedding_sess.get_inputs()[0].name: x.astype(
+                                np.float32
+                            )
+                        },
+                    )[0]
+                c = (
+                    clustering_sess.run(
+                        None,
+                        {
+                            clustering_sess.get_inputs()[
+                                0
+                            ].name: embeddings.astype(np.float32)
+                        },
+                    )[0]
+                    if clustering_model is None
+                    else clustering_model.predict(embeddings)
+                )
+                if c in chp:
                     yield window
 
     @flight_iterator

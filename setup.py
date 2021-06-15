@@ -6,6 +6,7 @@ from setuptools import find_packages, setup
 here = os.path.abspath(os.path.dirname(__file__))
 sample_dir = Path("traffic") / "data" / "samples"
 xml_dir = Path("traffic") / "data" / "eurocontrol" / "b2b" / "xml"
+onnx_dir = Path("traffic") / "algorithms" / "onnx"
 
 try:
     # Get the long description from the README file
@@ -55,6 +56,10 @@ setup(
             if f.startswith("travel")
         ]
         + ["traffic.conf", "py.typed"],
+        "traffic.algorithms.onnx": list(
+            file.relative_to(onnx_dir).as_posix()
+            for file in onnx_dir.glob("**/*.onnx")
+        ),
     },
     python_requires=">=3.7",
     install_requires=[
@@ -82,6 +87,7 @@ setup(
         "lxml",
         "metar",
         "torch",
+        "onnxruntime",
     ],
     extras_require={
         "dev": [

@@ -86,7 +86,6 @@ setup(
         "beautifulsoup4",
         "lxml",
         "metar",
-        "torch",
         "onnxruntime",
     ],
     extras_require={
@@ -99,6 +98,7 @@ setup(
             "pre-commit",
             "isort",
             "sphinx_rtd_theme",
+            "torch"
         ]
     },
     classifiers=[

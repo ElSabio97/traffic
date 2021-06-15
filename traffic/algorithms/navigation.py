@@ -11,7 +11,6 @@ from typing import (
 import numpy as np
 import onnxruntime as rt
 import pandas as pd
-import torch
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from typing_extensions import Protocol
 
@@ -837,6 +836,7 @@ class NavigationFeatures:
                 )
                 embeddings = None
                 if embedding_model is not None:
+                    import torch
                     embedding_model.to("cpu")
                     embedding_model.eval()
                     with torch.no_grad():

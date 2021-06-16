@@ -1,22 +1,20 @@
 # fmt: off
 import warnings
-from io import BytesIO
 from operator import attrgetter
 from pkgutil import get_data
 from typing import (
-    TYPE_CHECKING, Callable, Iterable, Iterator,
-    List, Optional, Sequence, Union, cast
+    TYPE_CHECKING, Iterable, Iterator, List, Optional, Sequence, Union, cast
 )
 
 import numpy as np
 import onnxruntime as rt
 import pandas as pd
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
-from typing_extensions import Protocol
 
 from ..core.geodesy import destination, mrr_diagonal
 from ..core.iterator import flight_iterator
 from ..core.time import deltalike, to_timedelta
+from .clustering import ClusteringProtocol, TransformerProtocol
 
 if TYPE_CHECKING:
     from ..core import Flight, FlightPlan  # noqa: 401
@@ -779,14 +777,6 @@ class NavigationFeatures:
             return -1
         return len(simplified.shape.buffer(1e-3).interiors)
 
-    class TransformerProtocol(Protocol):
-        def transform(self, X: np.ndarray) -> np.ndarray:
-            ...
-
-    class ClusteringProtocol(Protocol):
-        def predict(self, X: np.ndarray) -> np.ndarray:
-            ...
-
     @flight_iterator
     def holding_pattern(
         self,
@@ -800,7 +790,10 @@ class NavigationFeatures:
         samples: int = 30,
         chp: List[int] = [2],
     ) -> Iterator["Flight"]:
+
+        # The following cast secures the typing
         self = cast("Flight", self)
+
         if scaler is None:
             data = get_data("traffic.algorithms.onnx", "scaler.onnx")
             scaler_sess = rt.InferenceSession(data)
@@ -810,18 +803,26 @@ class NavigationFeatures:
         if clustering_model is None:
             data = get_data("traffic.algorithms.onnx", "clustering_model.onnx")
             clustering_sess = rt.InferenceSession(data)
+
+        start, stop = None, None
+
         for i, window in enumerate(self.sliding_windows(duration, step)):
             if window.duration >= pd.Timedelta(threshold):
+
                 window = window.assign(
                     flight_id=window.flight_id + "_" + str(i)
                 )
+
                 resampled = window.resample(samples)
+
                 if resampled.data.eval("track != track").any():
                     continue
+
                 tracks = (
                     resampled.data.track_unwrapped
                     - resampled.data.track_unwrapped[0]
                 ).values.reshape(1, -1)
+
                 x = (
                     scaler_sess.run(
                         None,
@@ -834,9 +835,12 @@ class NavigationFeatures:
                     if scaler is None
                     else scaler.transform(tracks)
                 )
+
                 embeddings = None
+
                 if embedding_model is not None:
                     import torch
+
                     embedding_model.to("cpu")
                     embedding_model.eval()
                     with torch.no_grad():
@@ -850,6 +854,7 @@ class NavigationFeatures:
                             )
                         },
                     )[0]
+
                 c = (
                     clustering_sess.run(
                         None,
@@ -862,8 +867,15 @@ class NavigationFeatures:
                     if clustering_model is None
                     else clustering_model.predict(embeddings)
                 )
+
                 if c in chp:
-                    yield window
+                    if start is None:
+                        start, stop = window.start, window.stop
+                    elif start < stop:
+                        stop = window.stop
+                    else:
+                        yield self.between(start, stop)
+                        start, stop = window.start, window.stop
 
     @flight_iterator
     def holding_pattern_back(

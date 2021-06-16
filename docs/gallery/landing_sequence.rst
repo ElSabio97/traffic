@@ -172,19 +172,19 @@ See how the configuration changed after two aircraft failed their landing.
 
     (
         (
-            c.mark_rule(size=3).encode(
+            chart.mark_rule(size=3).encode(
                 alt.X("utchoursminutes(final approach)", axis=alt.Axis(title="",),),
                 alt.X2("utchoursminutes(landing)"),
                 alt.Y("landing:N", sort="descending", axis=None),
                 alt.Color("go around:N"),
             )
-            + c.mark_text(baseline="middle", align="left", dx=12).encode(
+            + chart.mark_text(baseline="middle", align="left", dx=12).encode(
                 alt.X("utchoursminutes(landing)"),
                 alt.Y("landing:N"),
                 alt.Text("callsign"),
                 alt.Color("go around:N"),
             )
-            + c.mark_text(baseline="middle", align="left", size=20, dy=1, dx=-8).encode(
+            + chart.mark_text(baseline="middle", align="left", size=20, dy=1, dx=-8).encode(
                 alt.X("utchoursminutes(landing)"),
                 alt.Y("landing:N"),
                 alt.Color("go around:N"),
